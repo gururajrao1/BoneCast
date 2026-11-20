@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+figs/
+data/*.png
+data/boneage-*.png
+data/boneage-training-dataset.csv
+data/boneage-validation-dataset.csv
+checkpoints/
+*.pt
+*.pth
