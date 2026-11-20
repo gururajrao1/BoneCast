@@ -34,6 +34,28 @@ class NoSexNet(nn.Module):
         return self.head(self.cnn(x)).squeeze(1)
 
 
+class BackboneSexNet(nn.Module):
+    """Any torchvision backbone + sex fusion. Interdomain-ready head."""
+
+    def __init__(self, backbone, feat_dim, sex_dim=32, hidden=256):
+        super().__init__()
+        self.cnn = backbone
+        if hasattr(self.cnn, "fc"):
+            self.cnn.fc = nn.Identity()          # ResNet
+        elif hasattr(self.cnn, "heads"):
+            self.cnn.heads = nn.Identity()       # ViT
+        elif hasattr(self.cnn, "classifier"):
+            self.cnn.classifier = nn.Identity()  # ConvNeXt / EfficientNet
+        self.sex = nn.Linear(1, sex_dim)
+        self.head = nn.Sequential(nn.Linear(feat_dim + sex_dim, hidden),
+                                  nn.ReLU(), nn.Linear(hidden, 1))
+
+    def forward(self, x, male):
+        f = torch.flatten(self.cnn(x), 1)  # (B,1,1) pooled maps -> vector
+        s = torch.relu(self.sex(male.float().view(-1, 1)))
+        return self.head(torch.cat([f, s], dim=1)).squeeze(1)
+
+
 class SmallSexNet(nn.Module):
     def __init__(self):
         super().__init__()
@@ -109,16 +131,38 @@ def main():
 
     models = {"resnet50+sex (main)": BoneAgeNet(),
               "resnet50 no-sex (ablation)": NoSexNet(),
-              "resnet18+sex (light)": SmallSexNet()}
+              "resnet18+sex (light)": SmallSexNet(),
+              "convnext-tiny+sex (SOTA lit 3.68mo)": BackboneSexNet(
+                  torchvision.models.convnext_tiny(
+                      weights=torchvision.models.ConvNeXt_Tiny_Weights.IMAGENET1K_V1),
+                  768),
+              "efficientnet-b0+sex": BackboneSexNet(
+                  torchvision.models.efficientnet_b0(
+                      weights=torchvision.models.EfficientNet_B0_Weights.IMAGENET1K_V1),
+                  1280),
+              "vit-b16+sex (BAE-ViT style)": BackboneSexNet(
+                  torchvision.models.vit_b_16(
+                      weights=torchvision.models.ViT_B_16_Weights.IMAGENET1K_V1),
+                  768)}
     for name, m in models.items():
-        ms = bench_forward(m, device)
-        print(f"[model] {name}: params={count_params(m)/1e6:.1f}M forward={ms:.1f}ms/batch@256")
+        n_params = count_params(m) / 1e6
+        size = 224 if name.startswith("vit-") else 256  # ViT asserts exact 224
+        try:
+            ms = bench_forward(m, device, size=size, batch=4)
+            print(f"[model] {name}: params={n_params:.1f}M forward={ms:.1f}ms/batch4@{size}")
+        except torch.cuda.OutOfMemoryError:
+            print(f"[model] {name}: params={n_params:.1f}M OOM on 4GB GPU at batch4@256")
+        finally:
+            m.to("cpu")
+            if device.type == "cuda":
+                torch.cuda.empty_cache()
 
     # algo comparison: one synthetic z-score step
     xb = torch.randn(8, 3, 256, 256, device=device)
     mb = torch.randint(0, 2, (8,), device=device).float()
     torch.manual_seed(0)
-    for loss_name, fn in [("MSE-on-z", nn.MSELoss()), ("L1-on-z", nn.L1Loss())]:
+    for loss_name, fn in [("MSE-on-z", nn.MSELoss()), ("L1-on-z", nn.L1Loss()),
+                           ("SmoothL1-on-z", nn.SmoothL1Loss(beta=1.0))]:
         m = BoneAgeNet().to(device)
         opt = torch.optim.AdamW(m.parameters(), lr=1e-4)
         zt = torch.randn(8, device=device)

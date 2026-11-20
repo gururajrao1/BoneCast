@@ -26,18 +26,37 @@ Targets: mean ~127mo, std ~41mo; boys 54% / girls 46%; 72% of cases are 8–15y.
 
 ## Models benchmarked (`python -m src.benchmark`)
 
-| Model | Params | Forward/batch@256 (RTX 3050) |
-|---|---|---|
-| ResNet-50 + sex (main, `src/model.py`) | 24.0M | 48.8 ms |
-| ResNet-50 no-sex (ablation) | 24.0M | 48.1 ms |
-| ResNet-18 + sex (light) | 11.2M | 15.2 ms |
+| Model | Params | Forward/batch4 (RTX 3050 4GB) | Literature MAE |
+|---|---|---|---|
+| ResNet-50 + sex (main, `src/model.py`) | 24.0M | 25.7 ms @256 | ~6.8mo image-only; 4.2mo winner w/ sex |
+| ResNet-50 no-sex (ablation) | 24.0M | 25.1 ms @256 | proves sex signal value |
+| ResNet-18 + sex (light) | 11.2M | 9.5 ms @256 | fastest, for ablation |
+| ConvNeXt-Tiny + sex | 28.0M | 28.7 ms @256 | 3.68mo SOTA (BMJ 2024) |
+| EfficientNet-B0 + sex | 4.3M | 23.6 ms @256 | 6.6mo (B5, no sex) |
+| ViT-B/16 + sex (BAE-ViT style) | 86.0M | 77.1 ms @224 | 4.1mo multimodal |
 
 Baselines (synthetic N(127,41), n=512): mean MAE 31.65mo, sex-stratified 31.64mo
 (theory ≈ 0.8×41 = 32.8mo). Real-CSV baselines print automatically when data exists.
 Target bars: challenge winner ~4.2mo, radiologists ~4.8–7.0mo.
 
-Algos (one synthetic z-score step): MSE-on-z 1.1648, L1-on-z 0.7252.
-Default training: z-targets, MSE-on-z, AdamW, ReduceLROnPlateau, early stop on val MAE-months.
+Algos (one synthetic z-score step on GPU): MSE-on-z 1.2031, L1-on-z 0.7181,
+SmoothL1-on-z 0.4230. Default training: z-targets, MSE-on-z, AdamW,
+ReduceLROnPlateau, early stop on val MAE-months.
+
+## Interdomain directions (researched, next after real-data baseline)
+
+- **Clinical atlases (GP/TW3):** train ROI heads on carpal + epiphyseal/metaphyseal
+  regions instead of the whole hand only; TW3 grades each ROI A–I with weighted
+  scores — a multi-head model can mimic that and stay interpretable.
+- **Growth-chart priors:** fuse chronological age + height velocity (CDC charts)
+  with image + sex, like the RHPE follow-up study did (sex/skeletal/chronological
+  age inputs); penalize predictions that jump off the child's percentile curve.
+- **Self-supervised X-ray pretraining:** masked-autoencoder pretraining on
+  unlabeled hand/chest X-rays before fine-tuning, instead of ImageNet-only
+  transfer — narrows the natural-image → radiograph domain gap.
+- **Segmentation first:** hand-segment + contrast-normalize + keypoint-register
+  (Iglovikov recipe, 4.97mo) before the age regressor; removes scanner background
+  as a confounder.
 
 ## Train / evaluate
 
